@@ -30,7 +30,6 @@ function patternGuide(pattern, open) {
 const PREP_SEC = 30;
 const REC_SEC = 45;
 const PAUSE_MIN = 1.0;      // 秒。これ以上の無音を「間」とする
-const FRAME_MS = 50;
 const DEFAULT_FOCUS = [
   "So What型は「なぜなら」で終わらせず、「だから〜すべきだと見ています」という自分ごとの提案で締める",
   "「〜の可能性を見ています」のように名詞化せず、「〜になると見ています」で直接言い切る",
@@ -198,10 +197,7 @@ function openRecord(pattern) {
   $("rec-topic").textContent = t.topic;
   $("rec-guide").replaceChildren(patternGuide(pattern, true));
   $("rec-live").textContent = t.hint;
-  // ユーザー操作の中で AudioContext を作っておく（後で自動録音開始するため）
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  ctx.resume();
-  rec = { pattern, ctx, phase: "prep", left: PREP_SEC, frames: [], snaps: [], finals: "", interim: "", srErrors: [], srStarts: 0 };
+  rec = { pattern, phase: "prep", left: PREP_SEC, words: [], finals: "", interim: "", lastText: "", srErrors: [], srStarts: 0 };
   setPhase("準備", false);
   $("rec-clock").textContent = fmt(PREP_SEC);
   $("btn-rec").textContent = "準備OK、話し始める";
@@ -215,47 +211,25 @@ function openRecord(pattern) {
 
 function setPhase(text, on) { $("rec-phase").textContent = text; $("rec-phase").classList.toggle("on", on); }
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.max(0, Math.floor(s % 60))).padStart(2, "0")}`;
+const now = () => (performance.now() - rec.t0) / 1000;
 
+// Androidでは録音と音声認識が同時にマイクを使えないため、マイクは音声認識だけが使う。
+// 間は「認識結果が更新されたタイミング」の空きから推定する。
 async function startRecording() {
   if (!rec || rec.phase !== "prep") return;
   clearInterval(rec.prepTimer);
-  rec.phase = "starting";
-  $("btn-rec").disabled = true;
-  try {
-    rec.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-  } catch (e) {
-    setPhase("マイクを使えません", false);
-    $("rec-live").textContent = "マイクの使用が許可されていません。Chromeのサイト設定でマイクを許可してから、もう一度開いてください。";
-    rec.phase = "error"; return;
-  }
-  const { ctx } = rec;
-  await ctx.resume();
-  const src = ctx.createMediaStreamSource(rec.stream);
-  const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; src.connect(analyser);
-  const buf = new Float32Array(analyser.fftSize);
-  rec.chunks = [];
-  try {
-    rec.recorder = new MediaRecorder(rec.stream);
-    rec.recorder.ondataavailable = (e) => e.data.size && rec.chunks.push(e.data);
-    rec.recorder.start();
-  } catch { rec.recorder = null; }
   try { rec.wake = await navigator.wakeLock?.request("screen"); } catch { /* 画面スリープ防止は任意 */ }
-
   rec.t0 = performance.now();
   rec.phase = "rec";
   setPhase("録音中", true);
   $("btn-rec").textContent = "話し終えた";
-  $("btn-rec").disabled = false;
   $("rec-live").textContent = "";
-  rec.meterTimer = setInterval(() => {
-    analyser.getFloatTimeDomainData(buf);
-    let s = 0; for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
-    const t = (performance.now() - rec.t0) / 1000;
-    rec.frames.push({ t, r: Math.sqrt(s / buf.length) });
+  rec.tick = setInterval(() => {
+    const t = now();
     $("rec-clock").textContent = `${fmt(t)} / ${fmt(REC_SEC)}`;
-    drawMeter();
+    drawMeter(t);
     if (t >= REC_SEC) stopRecording();
-  }, FRAME_MS);
+  }, 100);
   startRecognition();
 }
 
@@ -272,10 +246,11 @@ function startRecognition() {
     if (fin) rec.finals += fin;
     rec.interim = interim;
     const text = rec.finals + interim;
-    rec.snaps.push({ t: (performance.now() - rec.t0) / 1000, len: text.length });
+    // 文字が増えた・変わった瞬間＝話している瞬間として記録する
+    if (text !== rec.lastText) { rec.words.push({ t: now(), len: text.length }); rec.lastText = text; }
     $("rec-live").textContent = text;
   };
-  r.onerror = (e) => { rec.srErrors.push(e.error); if (e.error === "not-allowed" || e.error === "audio-capture") rec.srBroken = true; };
+  r.onerror = (e) => { rec.srErrors.push(e.error); if (e.error === "not-allowed" || e.error === "audio-capture" || e.error === "service-not-allowed") rec.srBroken = true; };
   r.onend = () => {
     if (rec.interim) rec.finals += rec.interim; // 確定前に切れた分を拾う
     rec.interim = "";
@@ -289,80 +264,63 @@ function startRecognition() {
 async function stopRecording() {
   if (!rec || rec.phase !== "rec") return;
   rec.phase = "stopping";
-  clearInterval(rec.meterTimer);
+  rec.end = now();
+  clearInterval(rec.tick);
   $("btn-rec").disabled = true;
   setPhase("処理中", false);
   // 音声認識の最後の確定を待つ（最大2.5秒）
   if (rec.sr) {
     await new Promise((resolve) => { rec.srEnded = resolve; try { rec.sr.stop(); } catch { resolve(); } setTimeout(resolve, 2500); });
   }
-  if (rec.recorder && rec.recorder.state !== "inactive") {
-    await new Promise((resolve) => { rec.recorder.onstop = resolve; rec.recorder.stop(); });
-  }
-  rec.stream.getTracks().forEach((t) => t.stop());
   try { await rec.wake?.release(); } catch { /* 無視 */ }
-  rec.ctx.close();
   rec.phase = "done";
+  $("btn-rec").disabled = false;
   showResult(rec);
 }
 
 function cancelRecording() {
   if (rec) {
-    clearInterval(rec.prepTimer); clearInterval(rec.meterTimer);
+    clearInterval(rec.prepTimer); clearInterval(rec.tick);
     rec.phase = "cancel";
     try { rec.sr?.abort(); } catch { /* 無視 */ }
-    rec.stream?.getTracks().forEach((t) => t.stop());
-    try { rec.ctx.close(); } catch { /* 無視 */ }
+    try { rec.wake?.release(); } catch { /* 無視 */ }
   }
-  rec = null; renderHome(); show("home");
+  rec = null; $("btn-rec").disabled = false; renderHome(); show("home");
 }
 
-function drawMeter() {
+// 直近10秒の「言葉が出たタイミング」を縦線で表示する
+function drawMeter(t) {
   const c = $("rec-meter"), g = c.getContext("2d");
-  const W = c.width, H = c.height, n = 120, bw = W / n;
+  const W = c.width, H = c.height, win = 10;
   g.clearRect(0, 0, W, H);
-  const fr = rec.frames.slice(-n);
+  g.fillStyle = css("--line"); g.fillRect(0, H / 2 - 1, W, 2);
   g.fillStyle = css("--accent");
-  fr.forEach((f, i) => { const h = Math.min(H, Math.max(2, f.r * H * 8)); g.fillRect(i * bw, (H - h) / 2, bw - 1, h); });
+  for (const w of rec.words) {
+    const x = W - ((t - w.t) / win) * W;
+    if (x >= 0) g.fillRect(x - 2, 8, 4, H - 16);
+  }
 }
 
 // ---------- 間の分析 ----------
-function analyze(frames) {
-  if (frames.length < 10) return null;
-  const rs = frames.map((f) => f.r).sort((a, b) => a - b);
-  const pct = (p) => rs[Math.min(rs.length - 1, Math.floor(p * rs.length))];
-  const floor = pct(0.1), peak = pct(0.95);
-  const thr = Math.max(floor + (peak - floor) * 0.18, floor * 1.8, 0.004);
-  const voiced = frames.map((f) => f.r > thr);
-  // 150ms未満の短い音（物音）は無音扱いにする
-  for (let i = 0; i < voiced.length;) {
-    if (!voiced[i]) { i++; continue; }
-    let j = i; while (j < voiced.length && voiced[j]) j++;
-    if ((j - i) * FRAME_MS < 150) for (let k = i; k < j; k++) voiced[k] = false;
-    i = j;
-  }
-  const first = voiced.indexOf(true), last = voiced.lastIndexOf(true);
-  if (first < 0) return { noVoice: true, thr };
+const UPDATE_GAP = 0.3; // 話している最中の認識更新のおおよその間隔（秒）。空きからこの分を引いて間の長さとする
+
+function analyze(words, end) {
+  if (!words.length) return { noVoice: true };
   const pauses = [];
-  for (let i = first; i <= last;) {
-    if (voiced[i]) { i++; continue; }
-    let j = i; while (j <= last && !voiced[j]) j++;
-    const s = frames[i].t, e = frames[j].t;
-    if (e - s >= PAUSE_MIN) pauses.push({ s, e, d: e - s });
-    i = j;
+  for (let i = 0; i + 1 < words.length; i++) {
+    const d = words[i + 1].t - words[i].t - UPDATE_GAP;
+    if (d >= PAUSE_MIN) pauses.push({ s: words[i].t, e: words[i].t + d, d, len: words[i].len });
   }
-  const span = frames[last].t - frames[first].t;
+  const start = Math.max(0, words[0].t - UPDATE_GAP);
+  const last = words[words.length - 1].t;
+  const span = Math.max(0.5, last - start);
   const paused = pauses.reduce((a, p) => a + p.d, 0);
-  return { thr, voiced, start: frames[first].t, end: frames[last].t, span, net: Math.max(0.1, span - paused), pauses };
+  return { start, end: end ?? last, span, net: Math.max(0.1, span - paused), pauses };
 }
 
-// 間を文字起こしのどこに入れるか：間の開始時点までに認識されていた文字数で近似する
-function placePauses(a, snaps, text) {
-  return a.pauses.map((p, i) => {
-    let len = 0;
-    for (const s of snaps) { if (s.t <= p.s + 0.6) len = s.len; else break; }
-    return { ...p, no: i + 1, idx: Math.min(len, text.length), type: null };
-  });
+// 間は、その直前までに認識されていた文字数の位置に入れる
+function placePauses(a, text) {
+  return a.pauses.map((p, i) => ({ ...p, no: i + 1, idx: Math.min(p.len, text.length), type: null }));
 }
 
 // ---------- 採点 ----------
@@ -417,7 +375,7 @@ async function scoreTake(take) {
 今回の重点：
 ${settings.focus || "（なし）"}
 
-発話時間：${take.a ? take.a.span.toFixed(1) : "?"}秒
+発話時間：${take.a?.span != null ? take.a.span.toFixed(1) : "不明（手入力）"}秒
 文字起こし：
 ${marked}`;
   return askJSON({ system: SCORE_SYSTEM, user, schema: SCORE_SCHEMA, effort: "medium" });
@@ -435,27 +393,27 @@ let lastTake = null;
 function showResult(r) {
   const t = day.topics[r.pattern - 1];
   const text = (r.finals || "").trim();
-  const a = analyze(r.frames);
-  const take = { pattern: r.pattern, text, a, placed: a && !a.noVoice ? placePauses(a, r.snaps, text) : [], frames: r.frames };
+  const a = analyze(r.words, r.end);
+  const take = { pattern: r.pattern, text, a, placed: a.noVoice ? [] : placePauses(a, text), words: r.words };
   lastTake = take;
   $("res-pattern").textContent = PATTERNS[r.pattern].name;
   $("res-topic").textContent = t.topic;
   $("res-body").hidden = true; $("res-manual").hidden = true; $("res-drill").hidden = true;
   $("res-loading").hidden = false;
-  const audio = $("res-audio");
-  if (r.chunks?.length) { audio.src = URL.createObjectURL(new Blob(r.chunks, { type: r.recorder?.mimeType || "audio/webm" })); audio.hidden = false; }
-  else audio.hidden = true;
-  $("res-diag").textContent = `診断：音声認識 ${SR ? "あり" : "なし"}／開始${r.srStarts}回／エラー ${r.srErrors.length ? [...new Set(r.srErrors)].join(", ") : "なし"}／録音 ${r.chunks?.length ? "あり" : "なし"}`;
+  $("res-diag").textContent = `診断：音声認識 ${SR ? "あり" : "なし"}／開始${r.srStarts}回／更新${r.words.length}回／エラー ${r.srErrors.length ? [...new Set(r.srErrors)].join(", ") : "なし"}`;
   show("result");
 
-  if (a?.noVoice || !a) { $("res-loading").textContent = "声が検出できませんでした。マイクに近づいて、もう一度試してください。"; return; }
+  if (r.srErrors.includes("not-allowed") || r.srErrors.includes("service-not-allowed")) {
+    $("res-loading").textContent = "マイクの使用が許可されていません。Chromeのアドレスバー左のアイコン →「権限」でマイクを許可してから、もう一度試してください。"; return;
+  }
+  if (a.noVoice && !text) { $("res-loading").hidden = true; $("res-manual").hidden = false; $("in-manual").value = ""; return; }
   if (!text) { $("res-loading").hidden = true; $("res-manual").hidden = false; $("in-manual").value = ""; return; }
   runScoring(take);
 }
 
 async function runScoring(take) {
+  $("res-body").hidden = false; // 表示してから描かないと、タイムラインの幅が0になる
   renderAnalysis(take, null);
-  $("res-body").hidden = false;
   $("res-loading").hidden = false; $("res-loading").textContent = "採点中…";
   hideScore(true);
   try {
@@ -476,15 +434,16 @@ function hideScore(h) { for (const id of ["res-score", "res-checks", "res-feedba
 function stats(take) {
   const { a, text, placed } = take;
   const chars = text.replace(/[\s、。，．,.!?！？「」]/g, "").length;
-  const perMin = placed.length / Math.max(a.span / 60, 1 / 60);
+  const timed = !a.noVoice; // 手入力のときは時間情報がない
+  const perMin = timed ? placed.length / Math.max(a.span / 60, 1 / 60) : null;
   const typed = placed.filter((p) => p.type);
   const think = typed.filter((p) => p.type === "思考").length;
   return {
     count: placed.length,
     perMin,
     thinkRatio: typed.length ? think / typed.length : null,
-    cpm: chars / (a.net / 60),
-    span: a.span,
+    cpm: timed ? chars / (a.net / 60) : null,
+    span: timed ? a.span : null,
   };
 }
 
@@ -499,10 +458,13 @@ function renderAnalysis(take, s) {
     if (note) { const sm = document.createElement("small"); sm.textContent = " " + note; d.querySelector("dd").append(sm); }
     dl.append(d);
   };
+  if (st.span == null) { add("間の分析", "—", "手入力のため測定なし"); }
+  else {
   add("1秒以上の間", `${st.count}回`, `${st.perMin.toFixed(1)}回/分（目標3以下）`);
   add("思考の間の割合", st.thinkRatio == null ? (s ? "—" : "判定中") : `${Math.round(st.thinkRatio * 100)}%`, "目標30%未満");
   add("発話速度", `${Math.round(st.cpm)}字/分`, "目安250〜350");
   add("発話時間", `${st.span.toFixed(1)}秒`);
+  }
 
   // 文字起こし（間の印つき）
   const tr = $("res-transcript"); tr.replaceChildren();
@@ -543,9 +505,8 @@ function drawTimeline(take) {
   const dpr = window.devicePixelRatio || 1;
   const W = (c.width = Math.round(c.clientWidth * dpr)), H = (c.height = Math.round(c.clientHeight * dpr));
   g.clearRect(0, 0, W, H);
-  const fr = take.frames; if (!fr.length) return;
-  const T = fr[fr.length - 1].t || 1, x = (t) => (t / T) * W;
-  const peak = Math.max(...fr.map((f) => f.r), 0.01);
+  const ws = take.words || []; if (!ws.length) return;
+  const T = Math.max(take.a.end || 0, ws[ws.length - 1].t) || 1, x = (t) => (t / T) * W;
   const top = 18 * dpr, h = H - top - 6 * dpr;
   // 間の帯
   g.font = `${11 * dpr}px "IBM Plex Mono", monospace`;
@@ -555,10 +516,17 @@ function drawTimeline(take) {
     g.globalAlpha = 0.18; g.fillStyle = col; g.fillRect(x(p.s), top, x(p.e) - x(p.s), h);
     g.globalAlpha = 1; g.fillText(`${p.d.toFixed(1)}s`, Math.min(x(p.s), W - 34 * dpr), 3 * dpr);
   }
-  // 波形
+  // 話していた区間（間でない更新どうしをつないだ帯）
   g.fillStyle = css("--voice");
-  const bw = Math.max(1, W / fr.length);
-  for (const f of fr) { const bh = Math.max(1 * dpr, (f.r / peak) * h); g.fillRect(x(f.t), top + (h - bh) / 2, bw, bh); }
+  const bh = h * 0.5, by = top + (h - bh) / 2;
+  let segStart = Math.max(0, ws[0].t - UPDATE_GAP);
+  for (let i = 0; i < ws.length; i++) {
+    const next = ws[i + 1];
+    if (!next || next.t - ws[i].t - UPDATE_GAP >= PAUSE_MIN) {
+      g.fillRect(x(segStart), by, Math.max(2 * dpr, x(ws[i].t) - x(segStart)), bh);
+      if (next) segStart = next.t - UPDATE_GAP;
+    }
+  }
 }
 
 // ---------- イベント ----------
