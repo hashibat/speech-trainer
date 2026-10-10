@@ -161,7 +161,9 @@ function renderHome() {
   const d = new Date();
   $("today-label").textContent = `${d.getMonth() + 1}月${d.getDate()}日（${"日月火水木金土"[d.getDay()]}）の3題`;
   const list = $("topic-list"); list.replaceChildren();
-  for (const t of day.topics) {
+  for (const pattern of [1, 2, 3]) {
+    // お題がまだ無くても、型のカードと説明は出す
+    const t = day.topics[pattern - 1] || { pattern, topic: "（お題はAPIキーを設定すると表示されます）", hint: "", empty: true };
     const r = day.results[t.pattern];
     const li = document.createElement("li"); li.className = "topic";
     li.innerHTML = `<div class="pat"><span></span><span class="badge"></span></div><p class="title"></p><p class="hint"></p>
@@ -174,6 +176,11 @@ function renderHome() {
     li.querySelector(".hint").after(patternGuide(t.pattern, false));
     li.querySelector('[data-act="talk"]').onclick = () => openRecord(t.pattern);
     li.querySelector('[data-act="regen"]').onclick = (ev) => regenerate(t.pattern, ev.currentTarget);
+    if (t.empty) {
+      li.querySelector(".title").classList.add("placeholder");
+      li.querySelector(".hint").hidden = true;
+      li.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    }
     list.append(li);
   }
   const done = Object.values(day.results);

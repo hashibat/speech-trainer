@@ -69,6 +69,7 @@ input, select, textarea {
 .topic .pat { font-size: .8rem; color: var(--muted); font-weight: 700; display: flex; justify-content: space-between; gap: 8px; }
 .topic .title { font: 700 1.1rem/1.5 var(--font-display); margin: 0; }
 .topic .hint { margin: 0; font-size: .88rem; color: var(--muted); }
+.topic .title.placeholder { font: 400 .9rem/1.5 var(--font-body); color: var(--muted); }
 .topic .row button { flex: 1; padding: 10px 12px; }
 .badge { font-family: var(--font-num); color: var(--ink); }
 .badge.done { color: var(--effect); }
