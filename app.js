@@ -3,12 +3,30 @@ import Anthropic from "https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@0.133.0/+e
 // ---------- 定数 ----------
 const PATTERNS = {
   1: { name: "パターン1：コメンテーター型", short: "コメンテーター型",
-       lines: ["事実：○○がありました。", "見立て：私は○○だと見ています。", "理由：なぜなら○○だからです。"] },
+       desc: "出来事に「自分はこう見る」という解釈をつける型。聞き手がいちばん知りたいのは、事実よりあなたの見立てです。",
+       lines: ["事実：○○がありました。", "見立て：私は○○だと見ています。", "理由：なぜなら○○だからです。"],
+       example: "昨日、同僚が会議の冒頭で結論から話しました。私はあれが会議を15分短くした理由だと見ています。なぜなら、全員が最初から何を判断すればいいか分かっていたからです。" },
   2: { name: "パターン2：So What型", short: "So What型",
-       lines: ["事実：○○がありました。", "意味：これは○○を意味します。", "示唆：だから私は○○すべきだと見ています。"] },
+       desc: "出来事から「だから自分はどうするか」まで踏み込む型。最後は理由ではなく「〜すべき」という提案で締めます。",
+       lines: ["事実：○○がありました。", "意味：これは○○を意味します。", "示唆：だから私は○○すべきだと見ています。"],
+       example: "今朝、いつもより30分早く家を出ました。これは、朝に余白があると一日の段取りが変わることを意味します。だから私は、平日は毎日30分早く出るべきだと見ています。" },
   3: { name: "パターン3：ストーリー型", short: "ストーリー型",
-       lines: ["過去：かつて○○でした。", "現在：しかし今は○○です。", "未来：このままいけば○○になると見ています。"] },
+       desc: "昔と今を比べて、この先どうなるかを言い切る型。変化の流れを見せると、未来の予測に説得力が出ます。",
+       lines: ["過去：かつて○○でした。", "現在：しかし今は○○です。", "未来：このままいけば○○になると見ています。"],
+       example: "かつて私は、本を最後まで読み切らないと気が済みませんでした。しかし今は、必要な章だけ読んで次に進んでいます。このままいけば、読んだ量より使った量で読書を測るようになると見ています。" },
 };
+
+// 型の説明ブロック（概要・3文の組み立て・例）
+function patternGuide(pattern, open) {
+  const P = PATTERNS[pattern];
+  const box = document.createElement("details");
+  box.className = "guide"; box.open = open;
+  box.innerHTML = `<summary>${P.short}とは</summary><p class="desc"></p><ol class="template"></ol><p class="example-label">例</p><p class="example"></p>`;
+  box.querySelector(".desc").textContent = P.desc;
+  box.querySelector(".template").replaceChildren(...P.lines.map((l) => Object.assign(document.createElement("li"), { textContent: l })));
+  box.querySelector(".example").textContent = P.example;
+  return box;
+}
 const PREP_SEC = 30;
 const REC_SEC = 45;
 const PAUSE_MIN = 1.0;      // 秒。これ以上の無音を「間」とする
@@ -153,6 +171,7 @@ function renderHome() {
     if (r) { badge.textContent = `${r.score}/3`; badge.classList.add("done"); }
     li.querySelector(".title").textContent = t.topic;
     li.querySelector(".hint").textContent = t.hint;
+    li.querySelector(".hint").after(patternGuide(t.pattern, false));
     li.querySelector('[data-act="talk"]').onclick = () => openRecord(t.pattern);
     li.querySelector('[data-act="regen"]').onclick = (ev) => regenerate(t.pattern, ev.currentTarget);
     list.append(li);
@@ -170,7 +189,7 @@ function openRecord(pattern) {
   const t = day.topics[pattern - 1];
   $("rec-pattern").textContent = PATTERNS[pattern].name;
   $("rec-topic").textContent = t.topic;
-  $("rec-template").replaceChildren(...PATTERNS[pattern].lines.map((l) => Object.assign(document.createElement("li"), { textContent: l })));
+  $("rec-guide").replaceChildren(patternGuide(pattern, true));
   $("rec-live").textContent = t.hint;
   // ユーザー操作の中で AudioContext を作っておく（後で自動録音開始するため）
   const ctx = new (window.AudioContext || window.webkitAudioContext)();
