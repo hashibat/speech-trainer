@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1d2433">
+<title>三文スピーチ道場</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Zen+Kaku+Gothic+New:wght@700;900&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <h1>三文スピーチ道場</h1>
+  <button id="btn-settings" class="icon-btn" aria-label="設定">設定</button>
+</header>
+
+<main id="app">
+  <!-- 設定 -->
+  <section id="view-settings" class="view" hidden>
+    <h2>設定</h2>
+    <label for="in-key">Claude APIキー</label>
+    <input id="in-key" type="password" autocomplete="off" placeholder="sk-ant-...">
+    <p class="note">キーはこのスマホのブラウザ内にだけ保存されます。Anthropicの管理画面で月の上限額を設定しておいてください。</p>
+    <label for="in-model">モデル</label>
+    <select id="in-model">
+      <option value="claude-opus-5-5">Claude Opus 5.5（採点が最も的確・1日20〜30円）</option>
+      <option value="claude-sonnet-5-5">Claude Sonnet 5.5（安い・1日10〜15円）</option>
+    </select>
+    <label for="in-focus">今回の重点（前回の「次回意識すること」）</label>
+    <textarea id="in-focus" rows="5"></textarea>
+    <div class="row">
+      <button id="btn-save-settings" class="primary">保存</button>
+      <button id="btn-close-settings">閉じる</button>
+    </div>
+  </section>
+
+  <!-- お題一覧 -->
+  <section id="view-home" class="view">
+    <div class="day-head">
+      <p id="today-label" class="eyebrow"></p>
+      <p class="lede">型に沿って、3文で、断言で終える。</p>
+    </div>
+    <div id="topic-status" class="status" hidden></div>
+    <ol id="topic-list" class="topics"></ol>
+    <div id="total-box" class="total" hidden></div>
+  </section>
+
+  <!-- 録音 -->
+  <section id="view-record" class="view" hidden>
+    <p id="rec-pattern" class="eyebrow"></p>
+    <h2 id="rec-topic"></h2>
+    <ol id="rec-template" class="template"></ol>
+    <div class="clock-wrap">
+      <div id="rec-phase" class="phase">準備</div>
+      <div id="rec-clock" class="clock">0:30</div>
+      <canvas id="rec-meter" class="meter" width="600" height="60" aria-hidden="true"></canvas>
+    </div>
+    <p id="rec-live" class="live" aria-live="polite"></p>
+    <div class="row">
+      <button id="btn-rec" class="primary big">話し始める</button>
+      <button id="btn-rec-cancel">やめる</button>
+    </div>
+  </section>
+
+  <!-- 結果 -->
+  <section id="view-result" class="view" hidden>
+    <p id="res-pattern" class="eyebrow"></p>
+    <h2 id="res-topic"></h2>
+    <div id="res-loading" class="status">採点中…</div>
+    <div id="res-body" hidden>
+      <div class="score-line">
+        <span id="res-score" class="score"></span>
+        <ul id="res-checks" class="checks"></ul>
+      </div>
+      <h3>間（ま）</h3>
+      <canvas id="res-timeline" class="timeline" width="800" height="90" aria-label="発話と間のタイムライン"></canvas>
+      <dl id="res-stats" class="stats"></dl>
+      <audio id="res-audio" controls preload="metadata"></audio>
+      <h3>文字起こし</h3>
+      <p id="res-transcript" class="transcript"></p>
+      <h3>コーチより</h3>
+      <p id="res-feedback"></p>
+      <p id="res-focus" class="focus"></p>
+      <h3>改善版</h3>
+      <p id="res-improved" class="improved"></p>
+      <p id="res-drill" class="drill" hidden>思考の間が3割を超えています。見立て文を先に1文書いてから、もう一度話してみましょう（ドリルA）。</p>
+    </div>
+    <div id="res-manual" hidden>
+      <p class="note">文字起こしが取れませんでした。話した内容を入力すると採点します（キーボードのマイクで音声入力できます）。</p>
+      <textarea id="in-manual" rows="4"></textarea>
+      <button id="btn-manual" class="primary">この内容で採点</button>
+    </div>
+    <p id="res-diag" class="diag"></p>
+    <div class="row">
+      <button id="btn-retry">もう一度</button>
+      <button id="btn-back" class="primary">お題に戻る</button>
+    </div>
+  </section>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
